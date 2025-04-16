@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 
 /// SwiftUI component for viewing log file contents directly in the application
 public struct LogViewerView: View {
@@ -44,6 +45,11 @@ public struct LogViewerView: View {
     /// Focus state for the search field
     @FocusState var isSearchFieldFocused: Bool
     
+    @State private var uploadProgress: Double = 0.0
+    @State private var isUploading: Bool = false
+    @State private var uploader: LogUploaderService? = nil
+    @State private var cancellables: Set<AnyCancellable> = []
+    
     // MARK: - Initialization and Deinitialization
     
     public init() {
@@ -81,13 +87,59 @@ public struct LogViewerView: View {
             .navigationTitle("Log Viewer")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    if isUploading {
+                        HStack {
+                            ProgressView(value: uploadProgress)
+                                .frame(width: 80)
+                            Button(action: {
+                                uploader?.cancelUpload()
+                            }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.red)
+                            }
+                        }
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: {
-                        shareLogFile()
+                        guard let file = selectedLogFile else { return }
+                        isUploading = true
+                        uploadProgress = 0.0
+                        
+                        guard let uploaderService = Logger.makeUploader() else {
+                            print("❌ LogUploaderService is not configured via Logger")
+                            isUploading = false
+                            return
+                        }
+                        
+                        uploader = uploaderService
+                        
+                        uploaderService.uploadLogs([file])
+                            .receive(on: DispatchQueue.main)
+                            .sink { result in
+                                isUploading = false
+                                switch result {
+                                case .success(let url):
+                                    print("Uploaded to: \(url)")
+                                case .failure(let error):
+                                    print("Upload failed: \(error)")
+                                case .cancelled:
+                                    print("Upload cancelled")
+                                }
+                            }
+                            .store(in: &cancellables)
+                        
+                        uploaderService.uploadProgress
+                            .receive(on: DispatchQueue.main)
+                            .sink { progress in
+                                self.uploadProgress = progress
+                            }
+                            .store(in: &cancellables)
                     }) {
                         Image(systemName: "square.and.arrow.up")
                     }
-                    .disabled(selectedLogFile == nil)
+                    .disabled(selectedLogFile == nil || isUploading)
                 }
             }
         }

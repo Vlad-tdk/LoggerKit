@@ -8,9 +8,11 @@
 import Foundation
 import Combine
 import UIKit
+import ZIPFoundation
 
 /// Service for archiving and uploading logs to a server
-public class LogUploaderService {
+public class LogUploaderService: NSObject, URLSessionTaskDelegate {
+    public var uploadProgress = CurrentValueSubject<Double, Never>(0.0)
     
     // MARK: - Types
     
@@ -40,6 +42,37 @@ public class LogUploaderService {
                 return "Invalid server response"
             }
         }
+    }
+    
+    /// A global default endpoint used for uploading logs when none is explicitly provided.
+    ///
+    /// This can be set once and reused by calling `LogUploaderService.make()`
+    /// without specifying an `endpoint` parameter.
+    public static var globalUploadEndpoint: URL? = nil
+    
+    /// Creates and returns a configured instance of `LogUploaderService`.
+    ///
+    /// You can either provide a specific uploader instance, or allow this method to create one.
+    /// If no endpoint is explicitly provided, it will fall back to `globalUploadEndpoint`.
+    ///
+    /// - Parameters:
+    ///   - endpoint: The URL to which logs should be uploaded. Defaults to `globalUploadEndpoint`.
+    ///   - authHeaders: Optional HTTP headers for authentication or metadata.
+    ///   - timeoutInterval: Timeout for the upload request (default is 60 seconds).
+    ///   - uploader: An existing `LogUploaderService` instance. If provided, it will be returned as-is.
+    ///
+    /// - Returns: A configured `LogUploaderService` instance, or `nil` if no valid endpoint is available.
+    public static func make(
+        endpoint: URL? = LogUploaderService.globalUploadEndpoint,
+        authHeaders: [String: String] = [:],
+        timeoutInterval: TimeInterval = 60.0,
+        uploader: LogUploaderService? = nil
+    ) -> LogUploaderService? {
+        if let uploader = uploader {
+            return uploader
+        }
+        guard let url = endpoint else { return nil }
+        return LogUploaderService(endpoint: url, authHeaders: authHeaders, timeoutInterval: timeoutInterval)
     }
     
     /// Archiving options
@@ -78,11 +111,14 @@ public class LogUploaderService {
     
     // MARK: - Properties
     
+    /// The active upload task
+    private var currentUploadTask: URLSessionUploadTask?
+    
     /// URL of the endpoint for uploading logs
     private let uploadEndpoint: URL
     
     /// HTTP session settings
-    private let session: URLSession
+    private var session: URLSession
     
     /// Temporary directory for archives
     private let temporaryDirectory: URL
@@ -109,11 +145,15 @@ public class LogUploaderService {
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = timeoutInterval
         configuration.timeoutIntervalForResource = timeoutInterval
-        self.session = URLSession(configuration: configuration)
+        self.session = URLSession(configuration: configuration, delegate: nil, delegateQueue: nil)
         
-        // Creating a temporary directory
         self.temporaryDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("LogArchives", isDirectory: true)
+        
+        super.init() // call superclass init first
+        
         try? FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        
+        self.session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil) // reassign after super.init
     }
     
     // MARK: - Public Methods
@@ -143,7 +183,20 @@ public class LogUploaderService {
                 copiedFiles.append(destinationURL)
             }
             
-            return .success(copiedFiles)
+            // Create a zip archive from the copied files
+            let zipFileURL = collectionDirectory.appendingPathComponent("\(options.archiveName).zip")
+            
+            do {
+                let archive = try Archive(url: zipFileURL, accessMode: .create)
+                for fileURL in copiedFiles {
+                    let fileName = fileURL.lastPathComponent
+                    try archive.addEntry(with: fileName, fileURL: fileURL)
+                }
+            } catch {
+                return .failure(.archiveFailed(error))
+            }
+            
+            return .success([zipFileURL])
         } catch {
             return .failure(.archiveFailed(error))
         }
@@ -181,39 +234,38 @@ public class LogUploaderService {
         request.httpBody = httpBody
         
         // Execute the request
-        return session.dataTaskPublisher(for: request)
-            .map { data, response -> UploadResult in
-                // Check the HTTP status
-                guard let httpResponse = response as? HTTPURLResponse else {
-                    return .failure(LogUploadError.invalidServerResponse)
+        return Future<UploadResult, Never> { promise in
+            let task = self.session.uploadTask(with: request, from: httpBody) { data, response, error in
+                defer {
+                    self.cleanupTemporaryFiles(logFiles)
                 }
-                
+                defer {
+                    self.currentUploadTask = nil
+                }
+                if let error = error {
+                    promise(.success(.failure(LogUploadError.uploadFailed(error))))
+                    return
+                }
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    promise(.success(.failure(LogUploadError.invalidServerResponse)))
+                    return
+                }
                 if (200...299).contains(httpResponse.statusCode) {
-                    // Successful upload
-                    if let responseURL = self.parseServerResponse(data: data) {
-                        return .success(responseURL)
+                    if let data = data, let responseURL = self.parseServerResponse(data: data) {
+                        promise(.success(.success(responseURL)))
                     } else {
-                        return .success(self.uploadEndpoint) // Return the endpoint if no URL is in the response
+                        promise(.success(.success(self.uploadEndpoint)))
                     }
                 } else {
-                    // Server-side error
-                    let error = NSError(
-                        domain: "LogUploaderError",
-                        code: httpResponse.statusCode,
-                        userInfo: [NSLocalizedDescriptionKey: "Server returned status code: \(httpResponse.statusCode)"]
-                    )
-                    return .failure(LogUploadError.uploadFailed(error))
+                    let error = NSError(domain: "LogUploaderError", code: httpResponse.statusCode,
+                                        userInfo: [NSLocalizedDescriptionKey: "Server returned status code: \(httpResponse.statusCode)"])
+                    promise(.success(.failure(LogUploadError.uploadFailed(error))))
                 }
             }
-            .catch { error -> AnyPublisher<UploadResult, Never> in
-                return Just(.failure(LogUploadError.uploadFailed(error)))
-                    .eraseToAnyPublisher()
-            }
-            .handleEvents(receiveCompletion: { [weak self] _ in
-                // Delete temporary files after upload
-                self?.cleanupTemporaryFiles(logFiles)
-            })
-            .eraseToAnyPublisher()
+            self.currentUploadTask = task
+            task.resume()
+        }
+        .eraseToAnyPublisher()
     }
     
     /// Prepares and uploads logs in one operation
@@ -259,6 +311,12 @@ public class LogUploaderService {
         } catch {
             Log.system.error("Error cleaning up temporary files: \(error)")
         }
+    }
+    
+    /// Cancels the current log upload task if it exists
+    public func cancelUpload() {
+        currentUploadTask?.cancel()
+        currentUploadTask = nil
     }
     
     // MARK: - Private Methods
@@ -339,7 +397,7 @@ public class LogUploaderService {
         for fileURL in logFiles {
             body.append("--\(boundary)\r\n")
             body.append("Content-Disposition: form-data; name=\"logs[]\"; filename=\"\(fileURL.lastPathComponent)\"\r\n")
-            body.append("Content-Type: text/plain\r\n\r\n")
+            body.append("Content-Type: application/zip\r\n\r\n")
             
             // Add the file content
             if let fileData = try? Data(contentsOf: fileURL) {
@@ -430,12 +488,19 @@ public class LogUploaderService {
             }
         }
     }
+    
+    // MARK: - URLSessionTaskDelegate
+    
+    public func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        let progress = Double(totalBytesSent) / Double(totalBytesExpectedToSend)
+        uploadProgress.send(progress)
+    }
 }
 
 // MARK: - Helper Extensions
 
 extension DateFormatter {
-    /// Compact date formatter for file names (YYYY-MM-DD_HHMMSS)
+    /// Compact date formatter for file names (YYYY-MM-DD_HHmmss)
     public static let compact: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HHmmss"
@@ -451,6 +516,7 @@ extension Data {
         }
     }
 }
+
 
 // MARK: - Example Usage
 

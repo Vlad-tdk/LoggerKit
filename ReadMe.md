@@ -17,6 +17,14 @@
 - ✅ Thread-safe logging queue
 - ✅ Centralized access via `Log.system`, `Log.db`, etc.
 
+## 📦 Dependencies
+
+LoggerKit uses the following external library:
+
+- [ZIPFoundation](https://github.com/weichsel/ZIPFoundation): for creating `.zip` archives of log files before uploading.
+
+This dependency is managed via Swift Package Manager and is declared in `Package.swift`.
+
 ## 📦 Initialization Example
 
 ```swift
@@ -116,18 +124,54 @@ A SwiftUI component for viewing logs inside the app:
 - `LogStyle.colorCode` is intended **for terminal output only**. It may produce unreadable escape codes in log files or UI.
 - For UI and file output, use `.plain` or `.emoji`.
 
-## 🚧 In Progress
 
-### ☁️ Log Archiving and Uploading
+## ☁️ Log Archiving and Uploading
 
 Via `LogUploaderService`:
 
 - Prepares `.zip` archive
-- Upload to server
-- Supports custom headers, deviceInfo
+- Uploads to a configured server endpoint
+- Supports custom headers, timeout intervals
+- Upload progress reporting (`CurrentValueSubject<Double, Never>`)
+- Upload cancellation (`cancelUpload()`)
 - Share sheet integration
+- Centralized configuration via `Logger.configureUpload(endpoint:)`
 
-### 📌 TODO
+### 📤 Example: Uploading Logs via Logger
+
+```swift
+// 1. Configure the upload endpoint once (e.g., at app launch)
+Logger.configureUpload(endpoint: URL(string: "https://your.server.com/upload")!)
+
+// 2. Retrieve an uploader instance using Logger
+if let uploader = Logger.makeUploader() {
+    let logFiles: [URL] = [...] // list of log files to upload
+
+    // 3. Start the upload
+    let cancellable = uploader.uploadLogs(logFiles)
+        .sink { result in
+            switch result {
+            case .success(let url):
+                print("✅ Logs uploaded to: \(url)")
+            case .failure(let error):
+                print("❌ Upload failed: \(error)")
+            case .cancelled:
+                print("⚠️ Upload cancelled by user")
+            }
+        }
+
+    // 4. Optionally observe progress
+    let progressSub = uploader.uploadProgress
+        .sink { progress in
+            print("Upload progress: \(Int(progress * 100))%")
+        }
+
+    // You can cancel the upload anytime:
+    // uploader.cancelUpload()
+}
+```
+
+### 📌 🚧 In Progress
 
 - [ ] Split logs by date
 - [ ] Daily log archive

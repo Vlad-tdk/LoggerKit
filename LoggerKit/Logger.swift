@@ -9,7 +9,7 @@ import Foundation
 
 /// Logger that can output messages to the console and/or a file with configurable file size limit
 public struct Logger {
-
+    
     // MARK: - Properties
     
     private let subsystem: String        // Subsystem (usually the app identifier)
@@ -90,6 +90,37 @@ public struct Logger {
                 Logger.fileSizeCache[fileId] = 0
             }
         }
+    }
+    
+    // MARK: - Upload Configuration
+    
+    /// Global upload endpoint for log uploads
+    public static var uploadEndpoint: URL? = nil
+    
+    /// Creates and returns a configured instance of `LogUploaderService`.
+    ///
+    /// This method can either use the provided `uploader` instance or create a new one using
+    /// the specified `endpoint`, `authHeaders`, and `timeoutInterval`.
+    ///
+    /// - Parameters:
+    ///   - endpoint: The server URL to which logs will be uploaded. If `nil`, the value from `Logger.uploadEndpoint` is used.
+    ///   - authHeaders: Optional HTTP headers for authentication or additional metadata.
+    ///   - timeoutInterval: Timeout interval for the upload request (default is 60 seconds).
+    ///   - uploader: Optional custom uploader instance. If provided, this instance is returned directly.
+    ///
+    /// - Returns: A configured instance of `LogUploaderService` or `nil` if no valid endpoint is available.
+    
+    public static func makeUploader(
+        endpoint: URL? = Logger.uploadEndpoint,
+        authHeaders: [String: String] = [:],
+        timeoutInterval: TimeInterval = 60.0,
+        uploader: LogUploaderService? = nil
+    ) -> LogUploaderService? {
+        if let uploader = uploader {
+            return uploader
+        }
+        guard let url = endpoint else { return nil }
+        return LogUploaderService(endpoint: url, authHeaders: authHeaders, timeoutInterval: timeoutInterval)
     }
     
     // MARK: - Logging Methods

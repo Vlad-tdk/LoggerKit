@@ -10,11 +10,13 @@ let package = Package(
   products: [
     .library(name: "LoggerKit", targets: ["LoggerKit"])
   ],
-  dependencies: [],
+  dependencies: [
+    .package(url: "https://github.com/weichsel/ZIPFoundation", from: "0.9.0")
+  ],
   targets: [
     .target(
       name: "LoggerKit",
-      dependencies: [],
+      dependencies: ["ZIPFoundation"],
       path: "LoggerKit",
       sources: [
         "Level.swift",
