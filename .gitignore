@@ -1,0 +1,17 @@
+# Xcode
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+# SwiftPM
+.build/
+
+# Logs
+*.log
+
+# Swift Playgrounds
+timeline.xctimeline
+playground.xcworkspace
+
+# Packages
+Packages/
