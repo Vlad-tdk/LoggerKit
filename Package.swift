@@ -15,7 +15,7 @@ let package = Package(
     .target(
       name: "LoggerKit",
       dependencies: [],
-      path: ".",
+      path: "LoggerKit",
       sources: [
         "Level.swift",
         "Log.swift",
