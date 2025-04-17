@@ -27,6 +27,7 @@ public struct Logger {
     
     // MARK: - Static file size cache
     private static var fileSizeCache: [String: UInt64] = [:]
+    private static let fileAccessQueue = DispatchQueue(label: "com.logger.fileAccess")
     
     // MARK: - Initialization
     
@@ -72,9 +73,18 @@ public struct Logger {
             let logsDirectory = baseDir.appendingPathComponent("Logs", isDirectory: true)
             
             // Create log directory if it does not exist
-            try? FileManager.default.createDirectory(at: logsDirectory, withIntermediateDirectories: true)
+            do {
+                try FileManager.default.createDirectory(at: logsDirectory, withIntermediateDirectories: true)
+            } catch {
+#if DEBUG
+                print("Logger failed to create Logs directory: \(error.localizedDescription)")
+#endif
+            }
             
             tmpFileURL = logsDirectory.appendingPathComponent(filename)
+            if let fileURL = tmpFileURL {
+                print("Logger fileURL initialized at: \(fileURL.path)")
+            }
         }
         self.fileURL = tmpFileURL
         
@@ -83,10 +93,20 @@ public struct Logger {
         
         // Initialize file size cache if the file exists
         if let fileURL = self.fileURL {
-            if let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
-               let fileSize = attributes[.size] as? UInt64 {
-                Logger.fileSizeCache[fileId] = fileSize
-            } else {
+            do {
+                let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+                if let fileSize = attributes[.size] as? UInt64 {
+                    Logger.fileSizeCache[fileId] = fileSize
+                } else {
+#if DEBUG
+                    print("Logger: attributes[.size] is not UInt64, got: \(String(describing: attributes[.size]))")
+#endif
+                    Logger.fileSizeCache[fileId] = 0
+                }
+            } catch {
+#if DEBUG
+                print("Logger: failed to get file attributes: \(error.localizedDescription)")
+#endif
                 Logger.fileSizeCache[fileId] = 0
             }
         }
@@ -259,62 +279,65 @@ public struct Logger {
     ///   - maxFileSize: Max file size
     ///   - maxBackupCount: Max backup files
     private static func writeToFile(_ string: String, fileURL: URL, fileId: String, maxFileSize: UInt64, maxBackupCount: Int) throws {
-        do {
-            let directoryURL = fileURL.deletingLastPathComponent()
-            if !FileManager.default.isWritableFile(atPath: directoryURL.path) {
-                throw NSError(domain: "FileErrorDomain", code: 1001,
-                              userInfo: [NSLocalizedDescriptionKey: "No write access to directory: \(directoryURL.path)"])
-            }
-            
-            let currentSize = fileSizeCache[fileId] ?? 0
-            
-            if currentSize >= maxFileSize {
-                do {
-                    rotateLogFile(fileURL, maxBackupCount: maxBackupCount)
-                    fileSizeCache[fileId] = 0
+        var result: Result<Void, Error>!
+        fileAccessQueue.sync {
+            result = Result {
+                print("Attempting to write to: \(fileURL.path)")
+                print("File exists: \(FileManager.default.fileExists(atPath: fileURL.path))")
+                let directoryURL = fileURL.deletingLastPathComponent()
+                if !FileManager.default.isWritableFile(atPath: directoryURL.path) {
+                    throw NSError(domain: "FileErrorDomain", code: 1001,
+                                  userInfo: [NSLocalizedDescriptionKey: "No write access to directory: \(directoryURL.path)"])
                 }
-            }
-            
-            if !FileManager.default.fileExists(atPath: fileURL.path) {
+                
+                let currentSize = fileSizeCache[fileId] ?? 0
+                
+                if currentSize >= maxFileSize {
+                    do {
+                        rotateLogFile(fileURL, maxBackupCount: maxBackupCount)
+                        fileSizeCache[fileId] = 0
+                    }
+                }
+                
+                if !FileManager.default.fileExists(atPath: fileURL.path) {
+                    do {
+                        try Data().write(to: fileURL, options: .atomic)
+                    } catch {
+                        throw NSError(domain: "FileErrorDomain", code: 1003,
+                                      userInfo: [NSLocalizedDescriptionKey: "Failed to create file: \(error.localizedDescription)"])
+                    }
+                }
+                
+                let fileHandle: FileHandle
                 do {
-                    try Data().write(to: fileURL, options: .atomic)
+                    fileHandle = try FileHandle(forWritingTo: fileURL)
                 } catch {
-                    throw NSError(domain: "FileErrorDomain", code: 1003,
-                                  userInfo: [NSLocalizedDescriptionKey: "Failed to create file: \(error.localizedDescription)"])
-                }
-            }
-            
-            let fileHandle: FileHandle
-            do {
-                fileHandle = try FileHandle(forWritingTo: fileURL)
-            } catch {
-                throw NSError(domain: "FileErrorDomain", code: 1004,
-                              userInfo: [NSLocalizedDescriptionKey: "Failed to open file for writing: \(error.localizedDescription)"])
-            }
-            
-            defer {
-                try? fileHandle.close()
-            }
-            
-            do {
-                try fileHandle.seekToEnd()
-                
-                guard let data = string.data(using: .utf8) else {
-                    throw NSError(domain: "FileErrorDomain", code: 1005,
-                                  userInfo: [NSLocalizedDescriptionKey: "Failed to convert string to UTF-8 data"])
+                    throw NSError(domain: "FileErrorDomain", code: 1004,
+                                  userInfo: [NSLocalizedDescriptionKey: "Failed to open file for writing: \(error.localizedDescription)"])
                 }
                 
-                try fileHandle.write(contentsOf: data)
+                print("Writing string length: \(string.count), fileId: \(fileId)")
                 
-                fileSizeCache[fileId] = (fileSizeCache[fileId] ?? 0) + UInt64(data.count)
-            } catch {
-                throw NSError(domain: "FileErrorDomain", code: 1006,
-                              userInfo: [NSLocalizedDescriptionKey: "Error writing to file: \(error.localizedDescription)"])
+                do {
+                    try fileHandle.seekToEnd()
+                    
+                    guard let data = string.data(using: .utf8) else {
+                        throw NSError(domain: "FileErrorDomain", code: 1005,
+                                      userInfo: [NSLocalizedDescriptionKey: "Failed to convert string to UTF-8 data"])
+                    }
+                    
+                    try fileHandle.write(contentsOf: data)
+                    
+                    fileSizeCache[fileId] = (fileSizeCache[fileId] ?? 0) + UInt64(data.count)
+                    try? fileHandle.close()
+                } catch {
+                    try? fileHandle.close()
+                    throw NSError(domain: "FileErrorDomain", code: 1006,
+                                  userInfo: [NSLocalizedDescriptionKey: "Error writing to file: \(error.localizedDescription)"])
+                }
             }
-        } catch {
-            print("Error in writeToFile: \(error.localizedDescription)")
-            throw error
         }
+        try result.get()
     }
     /// Rotates the log file
     /// - Parameters:
