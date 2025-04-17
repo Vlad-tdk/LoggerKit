@@ -15,3 +15,5 @@ playground.xcworkspace
 
 # Packages
 Packages/
+# macOS system files
+.DS_Store
