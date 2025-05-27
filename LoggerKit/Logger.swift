@@ -90,6 +90,7 @@ public struct Logger {
         
         // Create a unique identifier for the file
         self.fileId = "\(subsystem).\(category).\(String(describing: fileURL?.absoluteString ?? ""))"
+        print("Logger initialized: subsystem = \(subsystem), category = \(category), fileId = \(fileId)")
         
         // Initialize file size cache if the file exists
         if let fileURL = self.fileURL {
@@ -155,6 +156,10 @@ public struct Logger {
         log(message, level: .debug, file: file, function: function, line: line)
     }
     
+    public func debug(_ message: Any, file: String = #file, function: String = #function, line: Int = #line) {
+        debug(String(describing: message), file: file, function: function, line: line)
+    }
+    
     /// Log an informational message
     /// - Parameters:
     ///   - message: Message text
@@ -163,6 +168,10 @@ public struct Logger {
     ///   - line: Line number (auto)
     public func info(_ message: String, file: String = #file, function: String = #function, line: Int = #line) {
         log(message, level: .info, file: file, function: function, line: line)
+    }
+    
+    public func info(_ message: Any, file: String = #file, function: String = #function, line: Int = #line) {
+        info(String(describing: message), file: file, function: function, line: line)
     }
     
     /// Log a warning
@@ -175,6 +184,10 @@ public struct Logger {
         log(message, level: .warning, file: file, function: function, line: line)
     }
     
+    public func warning(_ message: Any, file: String = #file, function: String = #function, line: Int = #line) {
+        warning(String(describing: message), file: file, function: function, line: line)
+    }
+    
     /// Log an error
     /// - Parameters:
     ///   - message: Message text
@@ -185,6 +198,10 @@ public struct Logger {
         log(message, level: .error, file: file, function: function, line: line)
     }
     
+    public func error(_ message: Any, file: String = #file, function: String = #function, line: Int = #line) {
+        error(String(describing: message), file: file, function: function, line: line)
+    }
+    
     /// Log a critical error
     /// - Parameters:
     ///   - message: Message text
@@ -193,6 +210,10 @@ public struct Logger {
     ///   - line: Line number (auto)
     public func critical(_ message: String, file: String = #file, function: String = #function, line: Int = #line) {
         log(message, level: .critical, file: file, function: function, line: line)
+    }
+    
+    public func critical(_ message: Any, file: String = #file, function: String = #function, line: Int = #line) {
+        critical(String(describing: message), file: file, function: function, line: line)
     }
     
     // MARK: - Private Helper Methods
