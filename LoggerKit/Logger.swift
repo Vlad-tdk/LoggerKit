@@ -229,6 +229,11 @@ public struct Logger {
         // Skip if the log level is below the minimum
         guard level >= minLevel else { return }
         
+        // Дополнительная проверка для релиза - логируем только error и critical
+#if !DEBUG
+        guard level >= .error else { return }
+#endif
+        
         // Capture local copies for the closure
         let subsystem = self.subsystem
         let category = self.category
@@ -250,27 +255,50 @@ public struct Logger {
             let logLevelString = style.apply(to: level)
             let formattedMessage = "[\(timestamp)] [\(category)] [\(logLevelString)] \(message) (\(filename):\(line))"
             
-            // Output to console in DEBUG mode or if destination is set
+            // Output to console
 #if DEBUG
             if destinations.contains(.console) {
+                print(formattedMessage)
+            }
+#else
+            // В релизе выводим в консоль только критичные ошибки
+            if destinations.contains(.console) && level >= .error {
                 print(formattedMessage)
             }
 #endif
             
             // Write to file if enabled
             if destinations.contains(.file), let fileURL = fileURL {
-                do {
-                    try Logger.writeToFile(formattedMessage + "\n", fileURL: fileURL, fileId: fileId, maxFileSize: maxFileSize, maxBackupCount: maxBackupCount)
-                } catch {
+                // В релизе записываем в файл только error и critical
 #if DEBUG
-                    print("Failed to write log to file: \(error.localizedDescription)")
+                let shouldWriteToFile = true
+#else
+                let shouldWriteToFile = level >= .error
 #endif
+                
+                if shouldWriteToFile {
+                    do {
+                        try Logger.writeToFile(formattedMessage + "\n", fileURL: fileURL, fileId: fileId, maxFileSize: maxFileSize, maxBackupCount: maxBackupCount)
+                    } catch {
+#if DEBUG
+                        print("Failed to write log to file: \(error.localizedDescription)")
+#endif
+                    }
                 }
             }
             
             // Send to all registered adapters if enabled
             if destinations.contains(.adapters) {
-                Logger.notifyAdapters(message: message, level: level, subsystem: subsystem, category: category, file: file, function: function, line: line)
+                // В релизе отправляем в адаптеры только error и critical
+#if DEBUG
+                let shouldSendToAdapters = true
+#else
+                let shouldSendToAdapters = level >= .error
+#endif
+                
+                if shouldSendToAdapters {
+                    Logger.notifyAdapters(message: message, level: level, subsystem: subsystem, category: category, file: file, function: function, line: line)
+                }
             }
         }
     }

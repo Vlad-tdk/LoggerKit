@@ -330,17 +330,29 @@ public struct LogViewerView: View {
             
             Spacer()
             
-            // Export button
+            // Export single file button
             Button(action: shareLogFile) {
                 VStack {
-                    Image(systemName: "square.and.arrow.up.circle")
+                    Image(systemName: "square.and.arrow.up")
                         .font(.system(size: 18))
-                    Text("Export")
+                    Text("Share File")
                         .font(.caption)
                 }
             }
             .buttonStyle(BorderlessButtonStyle())
             .disabled(selectedLogFile == nil)
+            
+            // Export all logs as archive button
+            Button(action: shareLogsAsArchive) {
+                VStack {
+                    Image(systemName: "archivebox")
+                        .font(.system(size: 18))
+                    Text("Share All")
+                        .font(.caption)
+                }
+            }
+            .buttonStyle(BorderlessButtonStyle())
+            .disabled(logFiles.isEmpty)
             
             // Clear button
             Button(action: clearDisplayedLog) {

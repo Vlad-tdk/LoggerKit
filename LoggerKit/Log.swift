@@ -20,8 +20,14 @@ public enum Log {
         return baseDir.appendingPathComponent("Logs", isDirectory: true)
     }()
     
-    /// Default minimum log level
-    private static let defaultMinLevel: Level = .info
+    /// Minimum log level based on build configuration
+    private static let defaultMinLevel: Level = {
+#if DEBUG
+        return .debug  // В debug режиме логируем всё
+#else
+        return .error  // В релизе только error и critical
+#endif
+    }()
     
     /// Default maximum log file size (5 MB)
     private static let defaultMaxFileSize: UInt64 = 5 * 1024 * 1024
@@ -48,7 +54,13 @@ public enum Log {
     public static let db = Logger(
         subsystem: appIdentifier,
         category: "Database",
-        minLevel: .warning,  // Only warnings and errors
+        minLevel: {
+#if DEBUG
+            return .warning  // В debug показываем предупреждения
+#else
+            return .error    // В релизе только ошибки
+#endif
+        }(),
         writeToFile: true,
         directory: logsDirectory,
         filename: "database.log",
@@ -61,7 +73,7 @@ public enum Log {
     public static let network = Logger(
         subsystem: appIdentifier,
         category: "Network",
-        minLevel: .info,
+        minLevel: defaultMinLevel,
         writeToFile: true,
         directory: logsDirectory,
         filename: "network.log",
@@ -75,22 +87,52 @@ public enum Log {
     public static let ui = Logger(
         subsystem: appIdentifier,
         category: "UI",
-        minLevel: .debug,
-        writeToFile: false,   // UI logs are usually not written to a file
+        minLevel: {
+#if DEBUG
+            return .debug    // В debug режиме логируем UI события
+#else
+            return .critical // В релизе только критичные UI проблемы
+#endif
+        }(),
+        writeToFile: {
+#if DEBUG
+            return false     // UI логи в debug не записываем в файл
+#else
+            return true      // В релизе записываем критичные проблемы
+#endif
+        }(),
         style: .emoji,
-        destinations: .consoleAndAdapters
+        destinations: {
+#if DEBUG
+            return .consoleAndAdapters
+#else
+            return .fileAndAdapters  // В релизе только в файл и адаптеры
+#endif
+        }()
     )
     
     /// Logger for debugging
     public static let debug = Logger(
         subsystem: appIdentifier,
         category: "Debug",
-        minLevel: .debug,
-        writeToFile: true,
+        minLevel: {
+#if DEBUG
+            return .debug
+#else
+            return .critical  // В релизе debug логгер практически отключен
+#endif
+        }(),
+        writeToFile: {
+#if DEBUG
+            return true
+#else
+            return false      // В релизе debug логи не записываем
+#endif
+        }(),
         directory: logsDirectory,
         filename: "debug.log",
         maxFileSize: defaultMaxFileSize,
-        maxBackupCount: 1,  // Fewer backups for debug logs
+        maxBackupCount: 1,
         style: .plain
     )
     
@@ -99,16 +141,17 @@ public enum Log {
     /// Initializes all logging adapters
     public static func initializeAdapters() {
 #if DEBUG
-        // In debug mode, initialize OSLog
+        // В debug режиме инициализируем OSLog
         let osLogAdapter = OSLogAdapter(subsystem: appIdentifier, category: "App")
         Logger.addAdapter(osLogAdapter)
         
-        // Example of initializing the Logos adapter, if used
-        // let logosLogger = CustomLogosLogger()
-        // let logosAdapter = LogosAdapter(logosLogger: logosLogger, source: "AppModule")
-        // Logger.addAdapter(logosAdapter)
+        system.info("Logging adapters initialized (DEBUG)")
+#else
+        // В релизе тоже можем использовать OSLog для критичных событий
+        let osLogAdapter = OSLogAdapter(subsystem: appIdentifier, category: "App")
+        Logger.addAdapter(osLogAdapter)
         
-        system.info("Logging adapters initialized")
+        system.error("Logging adapters initialized (RELEASE)")
 #endif
     }
     
@@ -154,6 +197,7 @@ public enum Log {
             system.error("Error clearing log files: \(error)")
         }
     }
+    
     public static var logDirectory: URL {
         let paths = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
         let logDir = paths[0].appendingPathComponent("Logs", isDirectory: true)
@@ -174,26 +218,11 @@ public enum Log {
  func applicationDidFinishLaunching() {
  Log.initializeAdapters()
  
- // Now loggers can be used anywhere in the application
- Log.system.info("Application started")
- Log.network.debug("Setting up network layer")
- Log.db.warning("Slow database query")
- }
- 
- // In other parts of the application
- func someNetworkCall() {
- Log.network.info("Making API request")
- // ...
- Log.network.error("Failed to connect to server")
- }
- 
- func databaseOperation() {
- Log.db.info("Requesting data from database")
- // ...
- }
- 
- func userInterfaceAction() {
- Log.ui.debug("User pressed button")
- // ...
+ // В debug режиме будут логироваться все сообщения
+ // В release режиме только error и critical
+ Log.system.info("Application started")      // Только в DEBUG
+ Log.network.debug("Setting up network")     // Только в DEBUG
+ Log.db.warning("Slow database query")       // Только в DEBUG
+ Log.system.error("Critical system error")   // В DEBUG и RELEASE
  }
  */
