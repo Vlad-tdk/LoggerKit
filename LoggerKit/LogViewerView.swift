@@ -5,6 +5,12 @@
 //   Created by Vladimir Martemianov on 16.4.25.
 //
 
+//   LogViewerView.swift
+//   LoggerKit
+//
+//   Created by Vladimir Martemianov on 16.4.25.
+//
+
 import SwiftUI
 import Combine
 
@@ -49,6 +55,13 @@ public struct LogViewerView: View {
     @State private var isUploading: Bool = false
     @State private var uploader: LogUploaderService? = nil
     @State private var cancellables: Set<AnyCancellable> = []
+    
+    // MARK: - Alert and Share Sheet States
+    @State var showDeleteAlert: Bool = false
+    @State var showClearAlert: Bool = false
+    @State var showShareSheet: Bool = false
+    @State var shareItems: [Any] = []
+    @State var fileToDelete: URL? = nil
     
     // MARK: - Initialization and Deinitialization
     
@@ -140,6 +153,41 @@ public struct LogViewerView: View {
                         Image(systemName: "square.and.arrow.up")
                     }
                     .disabled(selectedLogFile == nil || isUploading)
+                }
+            }
+            // MARK: - Alerts and Sheets
+            .alert("Delete log file?", isPresented: $showDeleteAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete", role: .destructive) {
+                    performDelete()
+                }
+            } message: {
+                if let fileURL = fileToDelete {
+                    Text("Are you sure you want to delete '\(fileURL.lastPathComponent)'?")
+                }
+            }
+            .alert("Clear log file?", isPresented: $showClearAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Clear", role: .destructive) {
+                    guard let fileURL = selectedLogFile else { return }
+                    do {
+                        try "".write(to: fileURL, atomically: true, encoding: .utf8)
+                        logContent = ""
+                    } catch {
+                        errorMessage = "Error clearing file: \(error.localizedDescription)"
+                    }
+                }
+            } message: {
+                if let fileURL = selectedLogFile {
+                    Text("Are you sure you want to delete all content from '\(fileURL.lastPathComponent)'?")
+                }
+            }
+            .sheet(isPresented: $showShareSheet, onDismiss: {
+                // Очищаем временные файлы после закрытия share sheet
+                cleanupTempFiles()
+            }) {
+                if !shareItems.isEmpty {
+                    ActivityViewController(activityItems: shareItems)
                 }
             }
         }
@@ -355,7 +403,9 @@ public struct LogViewerView: View {
             .disabled(logFiles.isEmpty)
             
             // Clear button
-            Button(action: clearDisplayedLog) {
+            Button(action: {
+                showClearAlert = true
+            }) {
                 VStack {
                     Image(systemName: "clear")
                         .font(.system(size: 18))
@@ -385,5 +435,42 @@ public struct LogViewerView: View {
                 .fill(Color(UIColor.secondarySystemBackground))
         )
         .padding(.horizontal)
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func cleanupTempFiles() {
+        shareItems.removeAll()
+        
+        // Удаляем временные файлы если они есть
+        for item in shareItems {
+            if let url = item as? URL, url.path.contains("SharedLog_") {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+    }
+}
+
+// MARK: - ActivityViewController Wrapper
+struct ActivityViewController: UIViewControllerRepresentable {
+    let activityItems: [Any]
+    
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(
+            activityItems: activityItems,
+            applicationActivities: nil
+        )
+        
+        controller.excludedActivityTypes = [
+            .assignToContact,
+            .addToReadingList,
+            .openInIBooks
+        ]
+        
+        return controller
+    }
+    
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {
+        // No updates needed
     }
 }

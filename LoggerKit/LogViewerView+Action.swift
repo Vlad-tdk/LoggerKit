@@ -1,7 +1,5 @@
 import SwiftUI
 
-import SwiftUI
-
 // MARK: - LogViewerView Action Methods
 extension LogViewerView {
     
@@ -14,58 +12,52 @@ extension LogViewerView {
     func clearSelectedLogFile() {
         guard let fileURL = selectedLogFile else { return }
         
-        let alert = UIAlertController(
-            title: "Clear log file?",
-            message: "Are you sure you want to delete all content from '\(fileURL.lastPathComponent)'?",
-            preferredStyle: .alert
+        // Создаем alert через SwiftUI state
+        let alert = Alert(
+            title: Text("Clear log file?"),
+            message: Text("Are you sure you want to delete all content from '\(fileURL.lastPathComponent)'?"),
+            primaryButton: .destructive(Text("Clear")) {
+                do {
+                    try "".write(to: fileURL, atomically: true, encoding: .utf8)
+                    logContent = ""
+                } catch {
+                    errorMessage = "Error clearing file: \(error.localizedDescription)"
+                }
+            },
+            secondaryButton: .cancel()
         )
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Clear", style: .destructive) { _ in
-            do {
-                try "".write(to: fileURL, atomically: true, encoding: .utf8)
-                logContent = ""
-            } catch {
-                errorMessage = "Error clearing file: \(error.localizedDescription)"
-            }
-        })
         
-        // Show alert
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let rootViewController = windowScene.windows.first?.rootViewController {
-            rootViewController.present(alert, animated: true)
-        }
+        // Показываем alert через состояние
+        showClearAlert = true
     }
     
     /// Delete the selected log file
     func deleteSelectedLog() {
         guard let fileURL = selectedLogFile else { return }
         
-        let alert = UIAlertController(
-            title: "Delete log file?",
-            message: "Are you sure you want to delete '\(fileURL.lastPathComponent)'?",
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "Delete", style: .destructive) { _ in
-            do {
-                try FileManager.default.removeItem(at: fileURL)
-                
-                // Update file list
-                logFiles = logFiles.filter { $0 != fileURL }
-                selectedLogFile = logFiles.first
-                
-                // Load content of the newly selected file
-                loadLogContent()
-            } catch {
-                errorMessage = "Error deleting file: \(error.localizedDescription)"
-            }
-        })
+        // Устанавливаем состояние для показа alert
+        fileToDelete = fileURL
+        showDeleteAlert = true
+    }
+    
+    /// Выполняет удаление файла
+    func performDelete() {
+        guard let fileURL = fileToDelete else { return }
         
-        // Show alert
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let rootViewController = windowScene.windows.first?.rootViewController {
-            rootViewController.present(alert, animated: true)
+        do {
+            try FileManager.default.removeItem(at: fileURL)
+            
+            // Update file list
+            logFiles = logFiles.filter { $0 != fileURL }
+            selectedLogFile = logFiles.first
+            
+            // Load content of the newly selected file
+            loadLogContent()
+        } catch {
+            errorMessage = "Error deleting file: \(error.localizedDescription)"
         }
+        
+        fileToDelete = nil
     }
     
     /// Toggle auto-refresh
@@ -98,11 +90,8 @@ extension LogViewerView {
             // Записываем данные во временный файл
             try logData.write(to: tempFileURL)
             
-            // Создаем элементы для шаринга
-            var activityItems: [Any] = []
-            
-            // Добавляем временный файл
-            activityItems.append(tempFileURL)
+            // Устанавливаем состояние для показа share sheet
+            shareItems = [tempFileURL]
             
             // Добавляем текстовое содержимое для приложений, которые лучше работают с текстом
             if let logContent = String(data: logData, encoding: .utf8) {
@@ -112,67 +101,18 @@ extension LogViewerView {
                 String(logContent.prefix(maxTextLength)) + "\n\n... (truncated, see attached file for full content)" :
                 logContent
                 
-                activityItems.append("Log file: \(fileName)\n\n\(truncatedContent)")
+                shareItems.append("Log file: \(fileName)\n\n\(truncatedContent)")
             }
             
-            let activityViewController = UIActivityViewController(
-                activityItems: activityItems,
-                applicationActivities: nil
-            )
-            
-            // Исключаем некоторые активности, которые могут не подходить для логов
-            activityViewController.excludedActivityTypes = [
-                .assignToContact,
-                .addToReadingList,
-                .openInIBooks
-            ]
-            
-            // Добавляем обработчик завершения для очистки временного файла
-            activityViewController.completionWithItemsHandler = { _, _, _, _ in
-                // Удаляем временный файл после завершения
-                try? FileManager.default.removeItem(at: tempFileURL)
-            }
-            
-            // Get UIWindow for presentation
-            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-               let rootViewController = windowScene.windows.first?.rootViewController {
-                
-                // На iPad указываем источник для popover
-                if let popoverController = activityViewController.popoverPresentationController {
-                    // Пытаемся найти представление для привязки popover
-                    popoverController.sourceView = rootViewController.view
-                    popoverController.sourceRect = CGRect(x: rootViewController.view.bounds.midX,
-                                                          y: rootViewController.view.bounds.midY,
-                                                          width: 0, height: 0)
-                    popoverController.permittedArrowDirections = []
-                }
-                
-                rootViewController.present(activityViewController, animated: true)
-            }
+            showShareSheet = true
             
         } catch {
             // В случае ошибки показываем простой share с URL
             errorMessage = "Error preparing file for sharing: \(error.localizedDescription)"
             
             // Fallback - делимся оригинальным файлом
-            let activityViewController = UIActivityViewController(
-                activityItems: [fileURL],
-                applicationActivities: nil
-            )
-            
-            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-               let rootViewController = windowScene.windows.first?.rootViewController {
-                
-                if let popoverController = activityViewController.popoverPresentationController {
-                    popoverController.sourceView = rootViewController.view
-                    popoverController.sourceRect = CGRect(x: rootViewController.view.bounds.midX,
-                                                          y: rootViewController.view.bounds.midY,
-                                                          width: 0, height: 0)
-                    popoverController.permittedArrowDirections = []
-                }
-                
-                rootViewController.present(activityViewController, animated: true)
-            }
+            shareItems = [fileURL]
+            showShareSheet = true
         }
     }
     
@@ -194,39 +134,16 @@ extension LogViewerView {
         switch result {
         case .success(let exportedFileURL):
             // Создаем элементы для шаринга
-            let activityItems: [Any] = [
+            shareItems = [
                 exportedFileURL,
                 "Application logs exported at \(DateFormatter.compact.string(from: Date()))"
             ]
             
-            let activityViewController = UIActivityViewController(
-                activityItems: activityItems,
-                applicationActivities: nil
-            )
-            
-            activityViewController.excludedActivityTypes = [
-                .assignToContact,
-                .addToReadingList,
-                .openInIBooks
-            ]
+            showShareSheet = true
             
             // Очищаем экспортированные файлы после завершения
-            activityViewController.completionWithItemsHandler = { _, _, _, _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
                 exporter.clearExportDirectory()
-            }
-            
-            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-               let rootViewController = windowScene.windows.first?.rootViewController {
-                
-                if let popoverController = activityViewController.popoverPresentationController {
-                    popoverController.sourceView = rootViewController.view
-                    popoverController.sourceRect = CGRect(x: rootViewController.view.bounds.midX,
-                                                          y: rootViewController.view.bounds.midY,
-                                                          width: 0, height: 0)
-                    popoverController.permittedArrowDirections = []
-                }
-                
-                rootViewController.present(activityViewController, animated: true)
             }
             
         case .failure(let error):
