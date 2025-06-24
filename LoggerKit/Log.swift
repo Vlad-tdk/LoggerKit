@@ -19,7 +19,31 @@ public enum Log {
         let baseDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return baseDir.appendingPathComponent("Logs", isDirectory: true)
     }()
+    // MARK: - Configuration Helpers
     
+    private static func getMinLevel(debugLevel: Level = .debug, releaseLevel: Level = .error) -> Level {
+#if DEBUG
+        return debugLevel
+#else
+        return releaseLevel
+#endif
+    }
+    
+    private static func getWriteToFile(debugValue: Bool = true, releaseValue: Bool = true) -> Bool {
+#if DEBUG
+        return debugValue
+#else
+        return releaseValue
+#endif
+    }
+    
+    private static func getDestinations(debugDest: LogDestination = .all, releaseDest: LogDestination = .fileAndAdapters) -> LogDestination {
+#if DEBUG
+        return debugDest
+#else
+        return releaseDest
+#endif
+    }
     /// Minimum log level based on build configuration
     private static let defaultMinLevel: Level = {
 #if DEBUG

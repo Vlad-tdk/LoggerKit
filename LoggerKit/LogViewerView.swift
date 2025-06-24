@@ -195,9 +195,12 @@ public struct LogViewerView: View {
             loadLogFiles()
         }
         .onDisappear {
-            // Stop timer when screen closes
             timer?.invalidate()
             timer = nil
+            cancellables.removeAll()
+            uploader?.cancelUpload()
+            uploader = nil
+            cleanupTempFiles()
         }
         .onTapGesture {
             // Additional check to hide keyboard when tapping anywhere

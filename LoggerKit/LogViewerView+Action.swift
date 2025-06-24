@@ -9,26 +9,12 @@ extension LogViewerView {
     }
     
     /// Clear the selected log file (with confirmation)
+    /// Clear the selected log file (with confirmation)
     func clearSelectedLogFile() {
-        guard let fileURL = selectedLogFile else { return }
-        
-        // Создаем alert через SwiftUI state
-        let alert = Alert(
-            title: Text("Clear log file?"),
-            message: Text("Are you sure you want to delete all content from '\(fileURL.lastPathComponent)'?"),
-            primaryButton: .destructive(Text("Clear")) {
-                do {
-                    try "".write(to: fileURL, atomically: true, encoding: .utf8)
-                    logContent = ""
-                } catch {
-                    errorMessage = "Error clearing file: \(error.localizedDescription)"
-                }
-            },
-            secondaryButton: .cancel()
-        )
-        
-        // Показываем alert через состояние
-        showClearAlert = true
+        // Показываем alert только если есть выбранный файл
+        if selectedLogFile != nil {
+            showClearAlert = true
+        }
     }
     
     /// Delete the selected log file

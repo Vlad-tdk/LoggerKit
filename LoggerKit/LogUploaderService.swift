@@ -457,9 +457,14 @@ public class LogUploaderService: NSObject, URLSessionTaskDelegate {
             }
             return nil
         } catch {
-            // If not JSON, try as a string
-            if let responseText = String(data: data, encoding: .utf8), let url = URL(string: responseText.trimmingCharacters(in: .whitespacesAndNewlines)) {
-                return url
+            // If not JSON, try as a string with validation
+            if let responseText = String(data: data, encoding: .utf8) {
+                let trimmedText = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let url = URL(string: trimmedText),
+                    url.scheme != nil,
+                   url.host != nil {
+                    return url
+                }
             }
             return nil
         }

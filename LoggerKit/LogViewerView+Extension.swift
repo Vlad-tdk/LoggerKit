@@ -21,26 +21,41 @@ extension LogViewerView {
         }
     }
     
-    /// Filtered log content
+    /// Filtered log content with caching
+    private static var lastFilterKey: String = ""
+    private static var lastFilterResult: String = ""
+    
     var filteredLogContent: String {
-        let lines = logContent.split(separator: "\n")
+        // Create cache key
+        let filterKey = "\(logContent.count)_\(searchText)_\(filterLevel?.rawValue ?? -1)"
         
-        return lines.filter { line in
+        // Return cached result if nothing changed
+        if filterKey == Self.lastFilterKey {
+            return Self.lastFilterResult
+        }
+        
+        let lines = logContent.split(separator: "\n")
+        let result = lines.lazy.filter { line in
             let lineString = String(line)
             
             // Filter by search query
-            let matchesSearchText = searchText.isEmpty || lineString.localizedCaseInsensitiveContains(searchText)
-            
-            // Filter by logging level
-            let matchesLevel: Bool
-            if let level = filterLevel {
-                matchesLevel = lineContainsLogLevel(lineString, level: level)
-            } else {
-                matchesLevel = true // Show all levels if no filter is selected
+            guard searchText.isEmpty || lineString.localizedCaseInsensitiveContains(searchText) else {
+                return false
             }
             
-            return matchesSearchText && matchesLevel
+            // Filter by logging level
+            if let level = filterLevel {
+                return lineContainsLogLevel(lineString, level: level)
+            }
+            
+            return true
         }.joined(separator: "\n")
+        
+        // Cache result
+        Self.lastFilterKey = filterKey
+        Self.lastFilterResult = result
+        
+        return result
     }
     
     /// Text color for different logging levels

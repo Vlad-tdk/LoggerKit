@@ -26,8 +26,34 @@ public struct Logger {
     private let fileId: String  // Unique identifier for file size cache
     
     // MARK: - Static file size cache
+    private static let fileCacheQueue = DispatchQueue(label: "com.logger.filecache", attributes: .concurrent)
     private static var fileSizeCache: [String: UInt64] = [:]
-    private static let fileAccessQueue = DispatchQueue(label: "com.logger.fileAccess")
+    
+    private static func getFileSize(for fileId: String) -> UInt64? {
+        return fileCacheQueue.sync { fileSizeCache[fileId] }
+    }
+    
+    private static func setFileSize(_ size: UInt64, for fileId: String) {
+        fileCacheQueue.async(flags: .barrier) { fileSizeCache[fileId] = size }
+    }
+    
+    // MARK: - Build Configuration
+    private static let isDebugBuild: Bool = {
+#if DEBUG
+        return true
+#else
+        return false
+#endif
+    }()
+    
+    private func shouldLogMessage(for level: Level) -> Bool {
+        guard level >= minLevel else { return false }
+#if !DEBUG
+        return level >= .error
+#else
+        return true
+#endif
+    }
     
     // MARK: - Initialization
     
@@ -97,22 +123,21 @@ public struct Logger {
             do {
                 let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
                 if let fileSize = attributes[.size] as? UInt64 {
-                    Logger.fileSizeCache[fileId] = fileSize
+                    Logger.setFileSize(fileSize, for: fileId)
                 } else {
 #if DEBUG
                     print("Logger: attributes[.size] is not UInt64, got: \(String(describing: attributes[.size]))")
 #endif
-                    Logger.fileSizeCache[fileId] = 0
+                    Logger.setFileSize(0, for: fileId)
                 }
             } catch {
 #if DEBUG
                 print("Logger: failed to get file attributes: \(error.localizedDescription)")
 #endif
-                Logger.fileSizeCache[fileId] = 0
+                Logger.setFileSize(0, for: fileId)
             }
         }
     }
-    
     // MARK: - Upload Configuration
     
     /// Global upload endpoint for log uploads
@@ -227,12 +252,7 @@ public struct Logger {
     ///   - line: Line number
     private func log(_ message: String, level: Level, file: String, function: String, line: Int) {
         // Skip if the log level is below the minimum
-        guard level >= minLevel else { return }
-        
-        // Дополнительная проверка для релиза - логируем только error и critical
-#if !DEBUG
-        guard level >= .error else { return }
-#endif
+        guard shouldLogMessage(for: level) else { return }
         
         // Capture local copies for the closure
         let subsystem = self.subsystem
@@ -329,7 +349,7 @@ public struct Logger {
     ///   - maxBackupCount: Max backup files
     private static func writeToFile(_ string: String, fileURL: URL, fileId: String, maxFileSize: UInt64, maxBackupCount: Int) throws {
         var result: Result<Void, Error>!
-        fileAccessQueue.sync {
+        fileCacheQueue.sync {
             result = Result {
                 print("Attempting to write to: \(fileURL.path)")
                 print("File exists: \(FileManager.default.fileExists(atPath: fileURL.path))")
@@ -377,7 +397,9 @@ public struct Logger {
                     
                     try fileHandle.write(contentsOf: data)
                     
-                    fileSizeCache[fileId] = (fileSizeCache[fileId] ?? 0) + UInt64(data.count)
+                    let currentCacheSize = fileSizeCache[fileId] ?? 0
+                    fileSizeCache[fileId] = currentCacheSize + UInt64(data.count)
+                    
                     try? fileHandle.close()
                 } catch {
                     try? fileHandle.close()
@@ -401,7 +423,14 @@ public struct Logger {
             if maxBackupCount > 0 {
                 let oldestBackupPath = path + ".\(maxBackupCount)"
                 if fileManager.fileExists(atPath: oldestBackupPath) {
-                    try fileManager.removeItem(atPath: oldestBackupPath)
+                    do {
+                        try fileManager.removeItem(atPath: oldestBackupPath)
+                    } catch {
+#if DEBUG
+                        print("Failed to remove oldest backup: \(error)")
+#endif
+                        // Continue anyway
+                    }
                 }
             }
             
@@ -411,17 +440,31 @@ public struct Logger {
                 let newBackupPath = path + ".\(i + 1)"
                 
                 if fileManager.fileExists(atPath: currentBackupPath) {
-                    try fileManager.moveItem(atPath: currentBackupPath, toPath: newBackupPath)
+                    do {
+                        try fileManager.moveItem(atPath: currentBackupPath, toPath: newBackupPath)
+                    } catch {
+#if DEBUG
+                        print("Failed to move backup \(i) to \(i+1): \(error)")
+#endif
+                        // Continue anyway
+                    }
                 }
             }
             
             // Move current log to .1
             if fileManager.fileExists(atPath: path) {
-                try fileManager.moveItem(atPath: path, toPath: path + ".1")
+                do {
+                    try fileManager.moveItem(atPath: path, toPath: path + ".1")
+                } catch {
+#if DEBUG
+                    print("Failed to rotate current log file: \(error)")
+#endif
+                    throw error // This is critical, re-throw
+                }
             }
         } catch {
 #if DEBUG
-            print("Error rotating log files: \(error)")
+            print("Critical error in log rotation: \(error)")
 #endif
         }
     }
